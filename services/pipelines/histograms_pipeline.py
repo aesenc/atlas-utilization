@@ -191,7 +191,10 @@ def _create_histograms_from_sqlite(
 
     # Load global ranges if available
     global_ranges_path = histograms_config.get("global_ranges_path")
-    global_ranges = load_global_ranges(global_ranges_path) if global_ranges_path else None
+    if global_ranges_path and os.path.isfile(global_ranges_path):
+        global_ranges = load_global_ranges(global_ranges_path)
+    else:
+        global_ranges = None
 
     bin_width_gev = histograms_config["bin_width_gev"]
     bin_widths_gev = [bin_width_gev] if isinstance(bin_width_gev, (int, float)) else bin_width_gev
