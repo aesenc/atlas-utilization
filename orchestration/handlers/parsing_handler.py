@@ -237,6 +237,7 @@ class ParsingHandler(StateHandler):
                         ),
                         event_count=len(filtered),
                         processing_time_sec=batch.processing_time_sec,
+                        dsid=batch.dsid,
                     )
                 elif "_triggerMatch" in batch.events.fields or "_runNumber" in batch.events.fields:
                     # Strip trigger fields even when not filtering
@@ -250,6 +251,7 @@ class ParsingHandler(StateHandler):
                         size_bytes=batch.size_bytes,
                         event_count=len(cleaned_events),
                         processing_time_sec=batch.processing_time_sec,
+                        dsid=batch.dsid,
                     )
 
                 if parsing_config.kinematic_cuts or parsing_config.particle_counts:
@@ -270,6 +272,7 @@ class ParsingHandler(StateHandler):
                         ),
                         event_count=len(filtered),
                         processing_time_sec=batch.processing_time_sec,
+                        dsid=batch.dsid,
                     )
                 # Accumulate batch into chunks
                 chunk = self.accumulator.add_batch(batch)
@@ -280,7 +283,8 @@ class ParsingHandler(StateHandler):
                     output_dir.mkdir(parents=True, exist_ok=True)
                     
                     batch_suffix = f"_batch{batch_idx}" if batch_idx is not None else ""
-                    file_name = f"parsed_{release_year}{batch_suffix}_chunk{chunk.chunk_index}.root"
+                    dsid_suffix = f"_dsid{chunk.dsid}" if chunk.dsid is not None else ""
+                    file_name = f"parsed_{release_year}{batch_suffix}{dsid_suffix}_chunk{chunk.chunk_index}.root"
                     file_path = output_dir / file_name
                     
                     # Save the awkward array to ROOT file
@@ -302,7 +306,8 @@ class ParsingHandler(StateHandler):
             output_dir.mkdir(parents=True, exist_ok=True)
             
             batch_suffix = f"_batch{batch_idx}" if batch_idx is not None else ""
-            file_name = f"parsed_{final_chunk.release_year}{batch_suffix}_final.root"
+            dsid_suffix = f"_dsid{final_chunk.dsid}" if final_chunk.dsid is not None else ""
+            file_name = f"parsed_{final_chunk.release_year}{batch_suffix}{dsid_suffix}_final.root"
             file_path = output_dir / file_name
             
             # Save the awkward array to ROOT file
