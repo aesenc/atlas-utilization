@@ -14,6 +14,11 @@ from typing import Optional
 from services.parsing import schemas
 from services.parsing.root_io import open_root_file
 from services import consts
+from domain.events import (
+    MC_EVENT_INFO_FIELD,
+    MC_EVENT_WEIGHT_FIELD,
+    MC_CHANNEL_NUMBER_FIELD,
+)
 
 
 class PartialFileReadError(RuntimeError):
@@ -257,7 +262,33 @@ class FileParser:
                 obj_branches[obj_name] = obj_branches_for_obj
         # Keep direct object names as-is, but store them under the "DirectObjects" key.
         obj_branches.update({"DirectObjects": {k: k for k in direct_objects}})
+        obj_branches.update(FileParser._mc_event_info_branches(tree_branches, release_year))
         return obj_branches
+
+    @staticmethod
+    def _mc_event_info_branches(
+        tree_branches: set[str],
+        release_year: str
+    ) -> dict[str, dict[str, str]]:
+        """
+        Locate the per-event MC generator weight and dataset number branches.
+
+        They are event-level scalars rather than particle collections, so they
+        are grouped under the reserved ``MC_EVENT_INFO_FIELD`` key.
+        Data files carry neither branch and get an empty mapping.
+        """
+        normalized_year = schemas.normalize_release_year(release_year)
+        candidates = {
+            schemas.MC_EVENT_WEIGHT_BRANCHES.get(normalized_year): MC_EVENT_WEIGHT_FIELD,
+            schemas.MC_CHANNEL_NUMBER_BRANCHES.get(normalized_year): MC_CHANNEL_NUMBER_FIELD,
+        }
+        present = {
+            branch: quantity for branch, quantity in candidates.items()
+            if branch and branch in tree_branches
+        }
+        if not present:
+            return {}
+        return {MC_EVENT_INFO_FIELD: present}
     
     @staticmethod
     def _prepare_obj_branch_name(
@@ -472,9 +503,13 @@ class FileParser:
                 bp: qty for bp, qty in branch_mapping.items()
                 if bp in accessible_set
             }
-            if accessible_branches and FileParser._can_calculate_inv_mass(
+            if obj_name in ("DirectObjects", MC_EVENT_INFO_FIELD):
+                # Not particle types — no invariant-mass field requirement.
+                if accessible_branches:
+                    accessible_obj_branches[obj_name] = accessible_branches
+            elif accessible_branches and FileParser._can_calculate_inv_mass(
                 list(accessible_branches.values())
-            ) or obj_name == "DirectObjects":
+            ):
                 accessible_obj_branches[obj_name] = accessible_branches
         
         return accessible_obj_branches
@@ -530,12 +565,41 @@ class FileParser:
         for obj_name, chunks in obj_events_by_quantities.items():
             if chunks:
                 concatenated = ak.concatenate(chunks)
+                if obj_name == MC_EVENT_INFO_FIELD:
+                    result[obj_name] = FileParser._zip_mc_event_info(
+                        concatenated, obj_branches[obj_name]
+                    )
+                    continue
                 result[obj_name] = ak.zip({
                     quantity: concatenated[full_branch]
                     for full_branch, quantity in obj_branches[obj_name].items()
                 })
         
         return result, read_error
+
+    @staticmethod
+    def _zip_mc_event_info(
+        arrays: ak.Array,
+        branch_mapping: dict[str, str]
+    ) -> ak.Array:
+        """
+        Build the flat per-event MC info record (one scalar per event).
+
+        PHYSLITE stores ``mcEventWeights`` as a vector per event, of which
+        index 0 is the nominal weight; legacy ntuples store a single float.
+        Values are widened so they round-trip unchanged through ROOT/uproot.
+        """
+        fields = {}
+        for full_branch, quantity in branch_mapping.items():
+            values = arrays[full_branch]
+            if quantity == MC_EVENT_WEIGHT_FIELD:
+                if values.ndim > 1:
+                    values = values[:, 0]  # nominal weight
+                values = ak.values_astype(values, np.float64)
+            elif quantity == MC_CHANNEL_NUMBER_FIELD:
+                values = ak.values_astype(values, np.int64)
+            fields[quantity] = values
+        return ak.zip(fields)
     
     @staticmethod
     def _auto_detect_branches(tree_branches: set[str]) -> dict[str, dict[str, str]]:
